@@ -12,6 +12,8 @@
 #define cbi(a, b) ((a) &= ~(1 << (b)))    //clears bit B in variable A
 #define tbi(a, b) ((a) ^= 1 << (b))       //toggles bit B in variable A
 
+#if 0
+
 #define PARENT PD7
 #define CHILD0 PD4
 #define CHILD1 PD2
@@ -116,7 +118,31 @@ void fade(uint8_t r1, uint8_t g1, uint8_t b1,
     }
 }
 
-#define BIT_DELAY 100
+#define BIT_DELAY 104
+#define HALF_BIT_DELAY 52
+uint8_t send_byte(uint8_t port, uint8_t ch)
+{
+    uint8_t i;
+
+    // send the start bit
+    cbi(PORTD, port);
+    _delay_us(BIT_DELAY);
+
+    for(i = 0; i < 8; i++)
+    {
+        if (ch & (1 << i))
+            sbi(PORTD, port);
+        else
+            cbi(PORTD, port);
+        _delay_us(BIT_DELAY);
+    }
+
+    // Send the stop bit
+    sbi(PORTD, port);
+    _delay_us(BIT_DELAY);
+
+    return 0;
+}
 
 uint8_t receive_byte(uint8_t port)
 {
@@ -124,14 +150,15 @@ uint8_t receive_byte(uint8_t port)
 
     // Wait for the line to become quiet
     for(;;)
-        if (!(PIND & (1 << port)))
+        if (PIND & (1 << port))
             break;
 
     // wait for the start bit
     for(;;)
-        if (PIND & (1 << port))
+        if (!(PIND & (1 << port)))
             break;
 
+    _delay_us(HALF_BIT_DELAY);
     for(i = 0; i < 8; i++)
     {
         _delay_us(BIT_DELAY);
@@ -145,29 +172,6 @@ uint8_t receive_byte(uint8_t port)
 
     return ch;
 }
-
-uint8_t send_byte(uint8_t port, uint8_t ch)
-{
-    uint8_t i;
-
-    // send the start bit
-    sbi(PORTD, port);
-    _delay_us(BIT_DELAY);
-
-    for(i = 0; i < 8; i++)
-    {
-        if (ch & (1 << i))
-            sbi(PORTD, port);
-        else
-            cbi(PORTD, port);
-        _delay_us(BIT_DELAY);
-    }
-
-    // Send the stop bit
-    cbi(PORTD, port);
-    _delay_us(BIT_DELAY);
-}
-
 uint8_t send_command(uint8_t port, char *cmd)
 {
     uint8_t num = 0, ack;
@@ -263,7 +267,7 @@ void process_command(char *cmd)
         set_led_color(255, 0, 0);
 }
 
-int main(void)
+int _main(void)
 {
     char cmd[32];
 
@@ -285,3 +289,42 @@ int main(void)
 
     return 0;
 }
+#endif
+
+
+#if BIT_BANG_TEST
+int main(void)
+{
+    uint8_t i, ch;
+
+    DDRD = (1 << PD6) | (1 << PD5) | (1 << PD3);
+
+    for(i = 0; i < 5; i++)
+    {
+        sbi(PORTD, 3);
+        _delay_ms(100);
+        cbi(PORTD, 3);
+        _delay_ms(100);
+    }
+    for(;;)
+    {
+        ch = receive_byte(7);
+        if (ch == 'A')
+        {
+            sbi(PORTD, 6);
+            cbi(PORTD, 5);
+            _delay_ms(500);
+            cbi(PORTD, 6);
+        }
+        else
+        {
+            sbi(PORTD, 5);
+            cbi(PORTD, 6);
+            _delay_ms(500);
+            cbi(PORTD, 5);
+        }
+    }
+
+    return 0;
+}
+#endif
