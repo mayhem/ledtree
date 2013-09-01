@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
-#define F_CPU 16000000UL
+#define F_CPU 6000000UL
 #include <util/delay.h>
 
 // Bit manipulation macros
@@ -21,54 +21,43 @@ void delay_ms(uint16_t d)
 
 void pwm_setup(void)
 {
-	/* Set to Fast PWM */
-	TCCR0A |= _BV(WGM01) | _BV(WGM00);
-	TCCR2A |= _BV(WGM21) | _BV(WGM20);
+    // PB4 = OC1B = blue
+    // PB1 = OC0B = red
+    // PB0 = 0C0A = green
 
-	// Set the compare output mode
-	TCCR0A |= _BV(COM0A1);
-	TCCR0A |= _BV(COM0B1);
-	TCCR2A |= _BV(COM2B1);
+    /* Set to Fast PWM */
+    TCCR0A |= _BV(WGM01) | _BV(WGM00) | _BV(COM0A1) | _BV(COM0B1);
+    GTCCR |= _BV(PWM1B) | _BV(COM1B1);
 
-	// Reset timers and comparators
-	OCR0A = 0;
-	OCR0B = 0;
-	OCR2B = 0;
-	TCNT0 = 0;
-	TCNT2 = 0;
+    // Reset timers and comparators
+    OCR0A = 0;
+    OCR0B = 0;
+    OCR1B = 0;
+    TCNT0 = 0;
+    TCNT1 = 0;
 
     // Set the clock source
-	TCCR0B |= _BV(CS00);
-	TCCR2B |= _BV(CS20);
+    TCCR0B |= _BV(CS00);
+    TCCR1 |= _BV(CS10);
 
     // Set PWM pins as outputs
-    DDRD |= (1<<PD6)|(1<<PD5)|(1<<PD3);
+    DDRB |= (1<<PB0)|(1<<PB1)|(1<<PB4);
 }
 
 void set_led_color(uint8_t red, uint8_t green, uint8_t blue)
 {
-    OCR2B = green;
+    OCR1B = blue;
     OCR0B = red;
-    OCR0A = blue;
+    OCR0A = green;
 }
 
 void flash_led(void)
 {
     uint8_t i;
 
-    for(i = 0; i < 10; i++)
+    for(i = 0; i < 5; i++)
     {
-        set_led_color(255, 0, 0);
-        _delay_ms(100);
-        set_led_color(0, 0, 0);
-        _delay_ms(100);
-
-        set_led_color(0, 255, 0);
-        _delay_ms(100);
-        set_led_color(0, 0, 0);
-        _delay_ms(100);
-
-        set_led_color(0, 0, 255);
+        set_led_color(255, 255, 255);
         _delay_ms(100);
         set_led_color(0, 0, 0);
         _delay_ms(100);
@@ -79,28 +68,28 @@ int fade_test(void)
 {
     uint8_t i;
 
-	while (1)
+    while (1)
     {
         for(i = 0; i < 255; i++)
         {
             set_led_color(i, 0, 0);
-		    _delay_ms(20); 
+            _delay_ms(20); 
         }
         set_led_color(0, 0, 0);
         for(i = 0; i < 255; i++)
         {
             set_led_color(0, i, 0);
-		    _delay_ms(20); 
+            _delay_ms(20); 
         }
         set_led_color(0, 0, 0);
         for(i = 0; i < 255; i++)
         {
             set_led_color(0, 0, i);
-		    _delay_ms(20); 
+            _delay_ms(20); 
         }
         set_led_color(0, 0, 0);
-	}
-	return 0;
+    }
+    return 0;
 }
 
 void fade(uint8_t r1, uint8_t g1, uint8_t b1,
@@ -120,21 +109,17 @@ void fade(uint8_t r1, uint8_t g1, uint8_t b1,
 
 int main(void)
 {
-    uint8_t i, r1, g1, b1, r2, b2, g2;
-
     pwm_setup();
     flash_led();
 
-    r1 = g1 = b1 = 0;
-	while (1)
+    while (1)
     {
-        r2 = random() % 255;
-        g2 = random() % 255;
-        b2 = random() % 255;
-        fade(r1, g1, b1, r2, g2, b2, 100, 10);
-        r1 = r2;
-        g1 = g2;
-        b1 = b2;
-	}
-	return 0;
+        fade(0, 0, 0,   255, 0, 0, 100, 10);
+        fade(255, 0, 0, 0, 0, 0,   100, 10);
+        fade(0, 0, 0,   0, 255, 0, 100, 10);
+        fade(0, 255, 0, 0, 0, 0,   100, 10);
+        fade(0, 0, 0,   0, 0, 255, 100, 10);
+        fade(0, 0, 255, 0, 0, 0,   100, 10);
+    }
+    return 0;
 }
