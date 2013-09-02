@@ -3,8 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <avr/interrupt.h>
-#include <avr/pgmspace.h>
-#define F_CPU 6000000UL
 #include <util/delay.h>
 
 // Bit manipulation macros
@@ -12,9 +10,9 @@
 #define cbi(a, b) ((a) &= ~(1 << (b)))    //clears bit B in variable A
 #define tbi(a, b) ((a) ^= 1 << (b))       //toggles bit B in variable A
 
-#define PARENT PD7
-#define CHILD0 PD4
-#define CHILD1 PD2
+#define PARENT 2  // PB2
+#define CHILD0 3  // PB3
+#define CHILD1 5  // PB5
 
 void process_command(char *cmd);
 
@@ -47,8 +45,9 @@ void setup(void)
     TCCR0B |= _BV(CS00);
     TCCR1 |= _BV(CS10);
 
-    // Set PWM pins as outputs
-    DDRB |= (1<<PB0)|(1<<PB1)|(1<<PB4);
+    // PB2, PB3, PB5 are used for PARENT, CHILD0, CHILD1
+    // but the port directions need to be decided when communication starts.
+    DDRB = (1 << PB0) | (1 << PB1) | (1 << PB4);
 }
 
 void set_led_color(uint8_t red, uint8_t green, uint8_t blue)
@@ -115,27 +114,27 @@ void fade(uint8_t r1, uint8_t g1, uint8_t b1,
     }
 }
 
-#define BIT_DELAY 104
+#define BIT_DELAY 102
 #define HALF_BIT_DELAY 52
 uint8_t send_byte(uint8_t port, uint8_t ch)
 {
     uint8_t i;
 
     // send the start bit
-    cbi(PORTD, port);
+    cbi(PORTB, port);
     _delay_us(BIT_DELAY);
 
     for(i = 0; i < 8; i++)
     {
         if (ch & (1 << i))
-            sbi(PORTD, port);
+            sbi(PORTB, port);
         else
-            cbi(PORTD, port);
+            cbi(PORTB, port);
         _delay_us(BIT_DELAY);
     }
 
     // Send the stop bit
-    sbi(PORTD, port);
+    sbi(PORTB, port);
     _delay_us(BIT_DELAY);
 
     return 0;
@@ -147,12 +146,12 @@ uint8_t receive_byte(uint8_t port)
 
     // Wait for the line to become quiet
     for(;;)
-        if (PIND & (1 << port))
+        if (PINB & (1 << port))
             break;
 
     // wait for the start bit
     for(;;)
-        if (!(PIND & (1 << port)))
+        if (!(PINB & (1 << port)))
             break;
 
     _delay_us(HALF_BIT_DELAY);
@@ -160,7 +159,7 @@ uint8_t receive_byte(uint8_t port)
     {
         _delay_us(BIT_DELAY);
 
-        if (PIND & (1 << port))
+        if (PINB & (1 << port))
             ch |= (1 << i);
     }    
 
@@ -177,13 +176,13 @@ uint8_t send_command(uint8_t port, char *cmd)
     for(;;)
     {
         // Prepare to send over the given pin
-        DDRD |= (1<<port);
+        DDRB |= (1<<port);
 
         for(ptr = cmd; *ptr; ptr++)
             send_byte(port, *ptr);
 
         // Prepare to receive over the given pin
-        DDRD &= ~(1<<port);
+        DDRB &= ~(1<<port);
 
         ack = receive_byte(port);
         if (ack == 0)
@@ -204,7 +203,7 @@ uint8_t send_command(uint8_t port, char *cmd)
     }
 
     // Switch back to transmit
-    DDRD |= (1<<port);
+    DDRB |= (1<<port);
 
     // Send ack
     send_byte(port, 0);
@@ -216,7 +215,7 @@ uint8_t receive_command(uint8_t port, char *cmd)
     char *ptr = cmd;
 
     // Prepare to receive over the given pin
-    DDRD &= ~(1<<port);
+    DDRB &= ~(1<<port);
 
     for(;;)
     {
@@ -231,7 +230,7 @@ uint8_t receive_command(uint8_t port, char *cmd)
     }
 
     // Switch to transmit
-    DDRD |= (1<<port);
+    DDRB |= (1<<port);
     send_byte(port, 0);
 
     process_command(cmd);
@@ -239,13 +238,13 @@ uint8_t receive_command(uint8_t port, char *cmd)
     for(;;)
     {
         // Prepare to send over the given pin
-        DDRD |= (1<<port);
+        DDRB |= (1<<port);
 
         for(ptr = cmd; *ptr; ptr++)
             send_byte(port, *ptr);
 
         // Prepare to receive over the given pin
-        DDRD &= ~(1<<port);
+        DDRB &= ~(1<<port);
 
         ack = receive_byte(port);
         if (ack == 0)
@@ -253,7 +252,7 @@ uint8_t receive_command(uint8_t port, char *cmd)
     }
 
     // Back to receive
-    DDRD &= ~(1<<port);
+    DDRB &= ~(1<<port);
 }
 
 void process_command(char *cmd)
@@ -280,60 +279,45 @@ void rainbow_main(void)
     }
 }
 
-int _main(void)
-{
-    char cmd[32];
-
-    setup();
-    flash_led();
-
-#if 1
-    strcpy(cmd, "boo!");
-    send_command(CHILD0, cmd);
-
-    if (strcmp(cmd, "boo!") == 0)
-        set_led_color(0, 0, 255);
-    else
-        set_led_color(255, 0, 0);
-#else
-    for(;;)
-        receive_command(PARENT, cmd);
-#endif
-
-    return 0;
-}
-#endif
-
+#define BB_MASTER 1
 #if BB_MASTER
 int main(void)
 {
     uint8_t i, ch;
 
-    DDRD = (1 << PD6) | (1 << PD5) | (1 << PD3);
+    setup();
+    flash_led();
 
-    for(i = 0; i < 5; i++)
-    {
-        sbi(PORTD, 3);
-        _delay_ms(100);
-        cbi(PORTD, 3);
-        _delay_ms(100);
-    }
+    DDRB |= (1 << CHILD0);
     for(;;)
     {
-        ch = receive_byte(7);
+        send_byte(CHILD0, 'A');
+        _delay_ms(1000);
+        send_byte(CHILD0, 'Z');
+        _delay_ms(1000);
+    }
+
+    return 0;
+}
+#else
+int main(void)
+{
+    uint8_t i, ch;
+
+    setup();
+    flash_led();
+    for(;;)
+    {
+        ch = receive_byte(PARENT);
         if (ch == 'A')
         {
-            sbi(PORTD, 6);
-            cbi(PORTD, 5);
+            set_led_color(0, 0, 255);
             _delay_ms(500);
-            cbi(PORTD, 6);
         }
         else
         {
-            sbi(PORTD, 5);
-            cbi(PORTD, 6);
+            set_led_color(255, 0, 0);
             _delay_ms(500);
-            cbi(PORTD, 5);
         }
     }
 

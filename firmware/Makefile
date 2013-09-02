@@ -1,5 +1,5 @@
 CC=avr-gcc
-CFLAGS=-g -Os -Wall -I../include -I../mixer -mcall-prologues -mmcu=attiny85
+CFLAGS=-g -Os -Wall -I../include -I../mixer -mcall-prologues -mmcu=attiny85 -DF_CPU=8000000UL
 OBJ2HEX=avr-objcopy 
 TARGET=ledtree
 
