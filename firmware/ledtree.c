@@ -21,9 +21,9 @@ void delay_ms(uint16_t d)
 
 void pwm_setup(void)
 {
-    // PB4 = OC1B = blue
-    // PB1 = OC0B = red
-    // PB0 = 0C0A = green
+    // PB4 = OC1B = 1k = blue
+    // PB1 = OC0B = 560 = red
+    // PB0 = 0C0A = 1k = green
 
     /* Set to Fast PWM */
     TCCR0A |= _BV(WGM01) | _BV(WGM00) | _BV(COM0A1) | _BV(COM0B1);
@@ -112,14 +112,17 @@ int main(void)
     pwm_setup();
     flash_led();
 
+//    set_led_color(255,255,255);
+//    for(;;);
+
     while (1)
     {
-        fade(0, 0, 0,   255, 0, 0, 100, 10);
-        fade(255, 0, 0, 0, 0, 0,   100, 10);
-        fade(0, 0, 0,   0, 255, 0, 100, 10);
-        fade(0, 255, 0, 0, 0, 0,   100, 10);
-        fade(0, 0, 0,   0, 0, 255, 100, 10);
-        fade(0, 0, 255, 0, 0, 0,   100, 10);
+        fade(255, 0, 0,     255, 255, 0,  100, 20);
+        fade(255, 255, 0,   0, 255,   0,  100, 20);
+        fade(  0, 255, 0,   0, 255, 255,  100, 20);
+        fade(  0, 255, 255, 0,   0, 255,  100, 20);
+        fade(  0,   0, 255, 255, 0, 255,  100, 20);
+        fade(255,   0, 255, 255, 0,   0,  100, 20);
     }
     return 0;
 }
