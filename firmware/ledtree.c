@@ -13,16 +13,19 @@
 #define PARENT 2  // PB2
 #define CHILD0 3  // PB3
 #define CHILD1 5  // PB5
+#define RED    1  // PB1
+#define GREEN  0  // PB0
+#define BLUE   4  // PB4
+
+// One clock tick = 8Mhz / 64 = 8us
+#define BIT_DURATION  50 //us
+#define TIMEOUT       12 * BIT_DURATION
 
 void process_command(char *cmd);
 
-void delay_ms(uint16_t d)
-{
-    uint16_t i;
-
-    for(i = 0; i < d; i++)
-        _delay_ms(1);
-}
+volatile int16_t g_event_time = -1;
+volatile uint8_t g_event = 2;
+volatile uint8_t g_data_lost = 0;
 
 void setup(void)
 {
@@ -31,8 +34,8 @@ void setup(void)
     // PB0 = 0C0A = 1k = green
 
     /* Set to Fast PWM */
-    TCCR0A |= _BV(WGM01) | _BV(WGM00) | _BV(COM0A1) | _BV(COM0B1);
-    GTCCR |= _BV(PWM1B) | _BV(COM1B1);
+//    TCCR0A |= _BV(WGM01) | _BV(WGM00) | _BV(COM0A1) | _BV(COM0B1);
+//    GTCCR |= _BV(PWM1B) | _BV(COM1B1);
 
     // Reset timers and comparators
     OCR0A = 0;
@@ -42,12 +45,71 @@ void setup(void)
     TCNT1 = 0;
 
     // Set the clock source
-    TCCR0B |= _BV(CS00);
-    TCCR1 |= _BV(CS10);
+    TCCR0B |= _BV(CS00) | _BV(CS01);
+    TCCR1 |= _BV(CS10) | _BV(CS11);
+
+    // Turn on timer overflow interrupt
+    TIMSK |= (1 << TOIE0);
 
     // PB2, PB3, PB5 are used for PARENT, CHILD0, CHILD1
     // but the port directions need to be decided when communication starts.
+
+    // Setup PWM pins as output
     DDRB = (1 << PB0) | (1 << PB1) | (1 << PB4);
+
+    // PCINT setup
+    PCMSK |= (1 << PCINT3);
+    GIMSK |= (1 << PCIE);
+}
+
+volatile uint16_t g_timer = 0;
+
+ISR(PCINT0_vect)
+{
+    if (g_event_time != -1)
+    {
+        g_data_lost = 1;
+        g_event_time = TCNT0;
+        return;
+    }
+    g_event_time = g_timer + TCNT0;
+    g_event = PINB & (CHILD0) ? 1 : 0;
+    tbi(PORTB, BLUE);
+}
+
+ISR(TIMER0_OVF_vect)
+{
+    g_timer += 256;
+}
+
+uint16_t get_time(void)
+{
+    uint16_t t;
+
+    cli();
+    t = g_timer;
+    t += TCNT0;
+    sei();
+
+    return t;
+}
+
+uint16_t elapsed_time(uint16_t start, uint16_t end)
+{
+    // if our counter has not rolled over, its simple math
+    if (start < end)
+        return end - start;
+
+    // it rolled, so we need to take that into account
+    return 65535 - start + end; 
+}
+
+void delay_ms(uint16_t d)
+{
+    uint16_t i;
+
+    for(i = 0; i < d; i++)
+        _delay_ms(1);
 }
 
 void set_led_color(uint8_t red, uint8_t green, uint8_t blue)
@@ -114,145 +176,133 @@ void fade(uint8_t r1, uint8_t g1, uint8_t b1,
     }
 }
 
-#define BIT_DELAY 102
-#define HALF_BIT_DELAY 52
 uint8_t send_byte(uint8_t port, uint8_t ch)
 {
     uint8_t i;
 
-    // send the start bit
+    // send the start/duration bit
+    sbi(PORTB, port);
+    _delay_us(BIT_DURATION);
+
     cbi(PORTB, port);
-    _delay_us(BIT_DELAY);
+    _delay_us(BIT_DURATION);
 
     for(i = 0; i < 8; i++)
     {
+        sbi(PORTB, port);
+        _delay_us(BIT_DURATION);
+
         if (ch & (1 << i))
-            sbi(PORTB, port);
-        else
+        {
+            _delay_us(BIT_DURATION);
             cbi(PORTB, port);
-        _delay_us(BIT_DELAY);
+        }
+        else
+        {
+            cbi(PORTB, port);
+            _delay_us(BIT_DURATION);
+        }
+        _delay_us(BIT_DURATION);
     }
 
-    // Send the stop bit
-    sbi(PORTB, port);
-    _delay_us(BIT_DELAY);
+    // Remove these later. they are here for debugging
+    _delay_us(BIT_DURATION);
+    _delay_us(BIT_DURATION);
 
     return 0;
 }
 
-uint8_t receive_byte(uint8_t port)
+void send_command(uint8_t port, char *cmd)
 {
-    uint8_t i, ch = 0;
-
-    // Wait for the line to become quiet
-    for(;;)
-        if (PINB & (1 << port))
-            break;
-
-    // wait for the start bit
-    for(;;)
-        if (!(PINB & (1 << port)))
-            break;
-
-    _delay_us(HALF_BIT_DELAY);
-    for(i = 0; i < 8; i++)
-    {
-        _delay_us(BIT_DELAY);
-
-        if (PINB & (1 << port))
-            ch |= (1 << i);
-    }    
-
-    // Ride out the stop bit
-    _delay_us(BIT_DELAY);
-
-    return ch;
-}
-uint8_t send_command(uint8_t port, char *cmd)
-{
-    uint8_t num = 0, ack;
     char *ptr;
 
-    for(;;)
-    {
-        // Prepare to send over the given pin
-        DDRB |= (1<<port);
-
-        for(ptr = cmd; *ptr; ptr++)
-            send_byte(port, *ptr);
-
-        // Prepare to receive over the given pin
-        DDRB &= ~(1<<port);
-
-        ack = receive_byte(port);
-        if (ack == 0)
-            break;
-    }
-
-    ptr = cmd;
-    for(;;)
-    {
-        *ptr = receive_byte(port);
-        if (*ptr == '\n')
-        {
-            *ptr = 0;
-            return num;
-        }
-        ptr++;
-        num++;
-    }
-
-    // Switch back to transmit
-    DDRB |= (1<<port);
-
-    // Send ack
-    send_byte(port, 0);
+    for(ptr = cmd; *ptr; ptr++)
+        send_byte(port, *ptr);
 }
 
-uint8_t receive_command(uint8_t port, char *cmd)
+#define MAX_CMD_LEN 32
+static char g_cmd[MAX_CMD_LEN];
+static uint8_t cmd_len = 0;
+
+uint8_t process_io(char *cmd)
 {
-    uint8_t num = 0, ack;
-    char *ptr = cmd;
+    static uint8_t start_t = 0, event, data;
+    static uint8_t bit_duration = 0;
+    static uint8_t bit_count = 0;
+    static uint16_t duration, event_time;
 
-    // Prepare to receive over the given pin
-    DDRB &= ~(1<<port);
+    cli();
+    event = g_event;
+    event_time = (uint8_t)g_event_time;
+    g_event_time = -1;
+    sei();
 
-    for(;;)
-    {
-        *ptr = receive_byte(port);
-        if (*ptr == '\n')
+    // Check to see if we have an event to process
+    if (event_time < 0)
+        return 0;
+    tbi(PORTB, GREEN);
+
+    // If we've lost data, flash the red led and quit!
+    if (g_data_lost)
+        for(;;)
         {
-            *ptr = 0;
-            return num;
+            tbi(PORTB, RED);
+            tbi(PORTB, GREEN);
+            tbi(PORTB, BLUE);
+            _delay_ms(100);
         }
-        ptr++;
-        num++;
-    }
 
-    // Switch to transmit
-    DDRB |= (1<<port);
-    send_byte(port, 0);
-
-    process_command(cmd);
-
-    for(;;)
+    // If we have a rising edge, note its time and bail
+    if (event)
     {
-        // Prepare to send over the given pin
-        DDRB |= (1<<port);
-
-        for(ptr = cmd; *ptr; ptr++)
-            send_byte(port, *ptr);
-
-        // Prepare to receive over the given pin
-        DDRB &= ~(1<<port);
-
-        ack = receive_byte(port);
-        if (ack == 0)
-            break;
+        start_t = get_time();
+        return 0;
     }
 
-    // Back to receive
-    DDRB &= ~(1<<port);
+    duration = elapsed_time(start_t, get_time());
+    // FIXME
+    if (0 && duration > TIMEOUT)
+    {
+        bit_count = 0;
+        bit_duration = 0;
+        cmd_len = 0;
+        g_cmd[0] = 0;
+    }
+
+    // For falling edge, check measure bit_duration if we don't have it
+    if (bit_duration == 0)
+    {
+        bit_duration = (uint8_t)duration;
+        bit_count = 0;
+        data = 0;
+        return 0;
+    }
+
+    // We have a falling edge and know bit_duration, then we have data!
+    if (abs((uint8_t)duration - bit_duration) > (bit_duration >> 1))
+    {
+        data |= (1 << bit_count);
+    }
+
+    bit_count++;
+    if (bit_count == 8)
+    {
+        bit_count = 0;
+        bit_duration = 0;
+
+        if (data == 's')
+            tbi(PORTB, RED);
+
+        if (data == '\n')
+        {
+            strcpy(cmd, g_cmd);
+            return 1;
+        }
+
+        g_cmd[cmd_len++] = data;
+        g_cmd[cmd_len] = 0;
+    }
+    return 0;
 }
 
 void process_command(char *cmd)
@@ -263,7 +313,7 @@ void process_command(char *cmd)
         set_led_color(255, 0, 0);
 }
 
-void rainbow_main(void)
+void __main(void)
 {
     setup();
     flash_led();
@@ -279,21 +329,19 @@ void rainbow_main(void)
     }
 }
 
-#define BB_MASTER 1
+#define BB_MASTER 0
 #if BB_MASTER
 int main(void)
 {
-    uint8_t i, ch;
-
     setup();
     flash_led();
 
     DDRB |= (1 << CHILD0);
     for(;;)
     {
-        send_byte(CHILD0, 'A');
+        send_command(CHILD0, "sex\n");
         _delay_ms(1000);
-        send_byte(CHILD0, 'Z');
+        send_command(CHILD0, "drugs\n");
         _delay_ms(1000);
     }
 
@@ -302,22 +350,31 @@ int main(void)
 #else
 int main(void)
 {
-    uint8_t i, ch;
+    uint8_t i;
+    char cmd[MAX_CMD_LEN];
 
     setup();
+    _delay_ms(2000);
     flash_led();
+    g_cmd[0] = 0;
+    sei();
+
     for(;;)
     {
-        ch = receive_byte(PARENT);
-        if (ch == 'A')
+        if (process_io(cmd))
         {
-            set_led_color(0, 0, 255);
-            _delay_ms(500);
-        }
-        else
-        {
-            set_led_color(255, 0, 0);
-            _delay_ms(500);
+            if (strcmp(cmd, "sex") == 0)
+            {
+                sbi(PORTB, BLUE);
+//                set_led_color(0, 0, 255);
+                _delay_ms(500);
+            }
+            else
+            {
+                cbi(PORTB, BLUE);
+//                set_led_color(255, 0, 0);
+                _delay_ms(500);
+            }
         }
     }
 
