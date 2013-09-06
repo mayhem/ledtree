@@ -17,14 +17,18 @@
 #define GREEN  0  // PB0
 #define BLUE   4  // PB4
 
+#define EVENT_FALLING_EDGE 0
+#define EVENT_RISING_EDGE  1
+#define EVENT_NO_EVENT     2
+
 // One clock tick = 8Mhz / 64 = 8us
 #define BIT_DURATION  50 //us
 #define TIMEOUT       12 * BIT_DURATION
 
 void process_command(char *cmd);
 
-volatile int16_t g_event_time = -1;
-volatile uint8_t g_event = 2;
+volatile uint16_t g_event_time = 0;
+volatile uint8_t g_event = EVENT_NO_EVENT;
 volatile uint8_t g_data_lost = 0;
 
 void setup(void)
@@ -66,15 +70,14 @@ volatile uint16_t g_timer = 0;
 
 ISR(PCINT0_vect)
 {
-    if (g_event_time != -1)
+    if (g_event != EVENT_NO_EVENT)
     {
         g_data_lost = 1;
-        g_event_time = TCNT0;
+        g_event_time = g_timer + TCNT0;
         return;
     }
     g_event_time = g_timer + TCNT0;
-    g_event = PINB & (CHILD0) ? 1 : 0;
-    tbi(PORTB, BLUE);
+    g_event = PINB & (1 << CHILD0) ? EVENT_RISING_EDGE : EVENT_FALLING_EDGE;
 }
 
 ISR(TIMER0_OVF_vect)
@@ -82,16 +85,17 @@ ISR(TIMER0_OVF_vect)
     g_timer += 256;
 }
 
-uint16_t get_time(void)
+uint8_t get_event(uint16_t *event_time)
 {
-    uint16_t t;
+    uint8_t event;
 
     cli();
-    t = g_timer;
-    t += TCNT0;
+    event = g_event;
+    g_event = EVENT_NO_EVENT;
+    *event_time = g_event_time;
     sei();
 
-    return t;
+    return event;
 }
 
 uint16_t elapsed_time(uint16_t start, uint16_t end)
@@ -226,21 +230,16 @@ static uint8_t cmd_len = 0;
 
 uint8_t process_io(char *cmd)
 {
-    static uint8_t start_t = 0, event, data;
+    static uint8_t event, data;
     static uint8_t bit_duration = 0;
     static uint8_t bit_count = 0;
-    static uint16_t duration, event_time;
+    static uint16_t duration, event_time, start_t;
 
-    cli();
-    event = g_event;
-    event_time = (uint8_t)g_event_time;
-    g_event_time = -1;
-    sei();
+    event = get_event(&event_time);
 
     // Check to see if we have an event to process
-    if (event_time < 0)
+    if (event == EVENT_NO_EVENT)
         return 0;
-    tbi(PORTB, GREEN);
 
     // If we've lost data, flash the red led and quit!
     if (g_data_lost)
@@ -253,13 +252,18 @@ uint8_t process_io(char *cmd)
         }
 
     // If we have a rising edge, note its time and bail
-    if (event)
+    if (event == EVENT_RISING_EDGE)
     {
-        start_t = get_time();
+        start_t = event_time;
         return 0;
     }
 
-    duration = elapsed_time(start_t, get_time());
+    // From here on out, its all processing falling edge events
+
+    duration = elapsed_time(start_t, event_time);
+//    if (duration < 25)
+//        tbi(PORTB, BLUE);
+
     // FIXME
     if (0 && duration > TIMEOUT)
     {
@@ -288,6 +292,7 @@ uint8_t process_io(char *cmd)
     if (bit_count == 8)
     {
         bit_count = 0;
+        tbi(PORTB, GREEN);
         bit_duration = 0;
 
         if (data == 's')
