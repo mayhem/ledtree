@@ -303,6 +303,7 @@ uint8_t process_io(char *cmd)
         if (data == '\n')
         {
             strcpy(cmd, g_cmd);
+            cmd_len = 0;
             return 1;
         }
 
@@ -361,7 +362,6 @@ int main(void)
     char cmd[MAX_CMD_LEN];
 
     setup();
-    _delay_ms(2000);
     flash_led();
     g_cmd[0] = 0;
     sei();
@@ -373,14 +373,12 @@ int main(void)
             if (strcmp(cmd, "sex") == 0)
             {
                 sbi(PORTB, BLUE);
-//                set_led_color(0, 0, 255);
-//                _delay_ms(500);
+                cbi(PORTB, RED);
             }
             else
             {
+                sbi(PORTB, RED);
                 cbi(PORTB, BLUE);
-//                set_led_color(255, 0, 0);
-//                _delay_ms(500);
             }
         }
     }
