@@ -230,10 +230,11 @@ static uint8_t cmd_len = 0;
 
 uint8_t process_io(char *cmd)
 {
-    static uint8_t event, data;
+    static uint16_t start_t = 0;
     static uint8_t bit_duration = 0;
-    static uint8_t bit_count = 0;
-    static uint16_t duration, event_time, start_t;
+    static uint8_t bit_count = 0, data = 0, have_start = 0;
+    uint8_t event;
+    uint16_t duration, event_time;
 
     event = get_event(&event_time);
 
@@ -255,8 +256,13 @@ uint8_t process_io(char *cmd)
     if (event == EVENT_RISING_EDGE)
     {
         start_t = event_time;
+        have_start = 1;
         return 0;
     }
+
+    if (!have_start)
+        return 0;
+    have_start = 0;
 
     // From here on out, its all processing falling edge events
 
@@ -292,11 +298,7 @@ uint8_t process_io(char *cmd)
     if (bit_count == 8)
     {
         bit_count = 0;
-        tbi(PORTB, GREEN);
         bit_duration = 0;
-
-        if (data == 's')
-            tbi(PORTB, RED);
 
         if (data == '\n')
         {
@@ -372,13 +374,13 @@ int main(void)
             {
                 sbi(PORTB, BLUE);
 //                set_led_color(0, 0, 255);
-                _delay_ms(500);
+//                _delay_ms(500);
             }
             else
             {
                 cbi(PORTB, BLUE);
 //                set_led_color(255, 0, 0);
-                _delay_ms(500);
+//                _delay_ms(500);
             }
         }
     }
