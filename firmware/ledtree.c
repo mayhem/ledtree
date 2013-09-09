@@ -10,9 +10,11 @@
 #define cbi(a, b) ((a) &= ~(1 << (b)))    //clears bit B in variable A
 #define tbi(a, b) ((a) ^= 1 << (b))       //toggles bit B in variable A
 
-#define PARENT 2  // PB2
-#define CHILD0 3  // PB3
-#define CHILD1 5  // PB5
+#define NOTHING  0  // nada!
+#define PARENT   2  // PB2
+#define CHILD0   3  // PB3
+#define CHILD1   5  // PB5
+
 #define RED    1  // PB1
 #define GREEN  0  // PB0
 #define BLUE   4  // PB4
@@ -30,6 +32,24 @@ void process_command(char *cmd);
 volatile uint16_t g_event_time = 0;
 volatile uint8_t g_event = EVENT_NO_EVENT;
 volatile uint8_t g_data_lost = 0;
+volatile uint16_t g_timer = 0;
+
+ISR(PCINT0_vect)
+{
+    if (g_event != EVENT_NO_EVENT)
+    {
+        g_data_lost = 1;
+        g_event_time = g_timer + TCNT0;
+        return;
+    }
+    g_event_time = g_timer + TCNT0;
+    g_event = PINB & (1 << CHILD0) ? EVENT_RISING_EDGE : EVENT_FALLING_EDGE;
+}
+
+ISR(TIMER0_OVF_vect)
+{
+    g_timer += 256;
+}
 
 void setup(void)
 {
@@ -60,29 +80,47 @@ void setup(void)
 
     // Setup PWM pins as output
     DDRB = (1 << PB0) | (1 << PB1) | (1 << PB4);
-
-    // PCINT setup
-    PCMSK |= (1 << PCINT3);
-    GIMSK |= (1 << PCIE);
 }
 
-volatile uint16_t g_timer = 0;
-
-ISR(PCINT0_vect)
+void listen_to(uint8_t pin)
 {
-    if (g_event != EVENT_NO_EVENT)
+    switch(pin)
     {
-        g_data_lost = 1;
-        g_event_time = g_timer + TCNT0;
-        return;
+        case PARENT:
+            PCMSK = (1 << PCINT2);
+            GIMSK = (1 << PCIE);
+            break;
+        case CHILD0:
+            PCMSK = (1 << PCINT3);
+            GIMSK = (1 << PCIE);
+            break;
+        case CHILD1:
+            PCMSK = (1 << PCINT5);
+            GIMSK = (1 << PCIE);
+            break;
+        case NOTHING:
+            PCMSK = 0;
+            GIMSK = 0;
+            break;
     }
-    g_event_time = g_timer + TCNT0;
-    g_event = PINB & (1 << CHILD0) ? EVENT_RISING_EDGE : EVENT_FALLING_EDGE;
 }
 
-ISR(TIMER0_OVF_vect)
+void send_to(uint8_t pin)
 {
-    g_timer += 256;
+    // Turn all comm pins to inputs
+    DDRB &= ~((1 << PB2) | (1 << PB3) | (1 << PB5));
+    switch(pin)
+    {
+        case PARENT:
+            DDRB |= (1 << PB2);
+            break;
+        case CHILD0:
+            DDRB |= (1 << PB3);
+            break;
+        case CHILD1:
+            DDRB |= (1 << PB5);
+            break;
+    }
 }
 
 uint8_t get_event(uint16_t *event_time)
@@ -220,8 +258,10 @@ void send_command(uint8_t port, char *cmd)
 {
     char *ptr;
 
+    send_to(port);
     for(ptr = cmd; *ptr; ptr++)
         send_byte(port, *ptr);
+    send_to(NOTHING);
 }
 
 #define MAX_CMD_LEN 32
@@ -337,20 +377,30 @@ void __main(void)
     }
 }
 
-#define BB_MASTER 0
+#define BB_MASTER 1
 #if BB_MASTER
 int main(void)
 {
+    char cmd[MAX_CMD_LEN];
+
     setup();
     flash_led();
 
-    DDRB |= (1 << CHILD0);
     for(;;)
     {
         send_command(CHILD0, "sex\n");
-        _delay_ms(1000);
-        send_command(CHILD0, "drugs\n");
-        _delay_ms(1000);
+        listen_to(CHILD0);
+        for(;;)
+        {
+            if (process_io(cmd))
+            {
+                if (strcmp(cmd, "sex") == 0)
+                   tbi(PORTB, BLUE);
+                else
+                   tbi(PORTB, RED);
+            }
+        }
+        listen_to(NOTHING);
     }
 
     return 0;
@@ -358,7 +408,6 @@ int main(void)
 #else
 int main(void)
 {
-    uint8_t i;
     char cmd[MAX_CMD_LEN];
 
     setup();
@@ -366,20 +415,15 @@ int main(void)
     g_cmd[0] = 0;
     sei();
 
+    listen_to(CHILD0);
     for(;;)
     {
         if (process_io(cmd))
         {
-            if (strcmp(cmd, "sex") == 0)
-            {
-                sbi(PORTB, BLUE);
-                cbi(PORTB, RED);
-            }
-            else
-            {
-                sbi(PORTB, RED);
-                cbi(PORTB, BLUE);
-            }
+            listen_to(NOTHING);
+            send_command(CHILD0, cmd);
+            listen_to(CHILD0);
+            tbi(PORTB, BLUE);
         }
     }
 
