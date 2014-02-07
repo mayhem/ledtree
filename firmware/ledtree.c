@@ -58,8 +58,8 @@ void setup(void)
     // PB0 = 0C0A = 1k = green
 
     /* Set to Fast PWM */
-//    TCCR0A |= _BV(WGM01) | _BV(WGM00) | _BV(COM0A1) | _BV(COM0B1);
-//    GTCCR |= _BV(PWM1B) | _BV(COM1B1);
+    TCCR0A |= _BV(WGM01) | _BV(WGM00) | _BV(COM0A1) | _BV(COM0B1) | _BV(COM0A0) | _BV(COM0B0);
+    GTCCR |= _BV(PWM1B) | _BV(COM1B1) | _BV(COM1B0);
 
     // Reset timers and comparators
     OCR0A = 0;
@@ -156,9 +156,9 @@ void delay_ms(uint16_t d)
 
 void set_led_color(uint8_t red, uint8_t green, uint8_t blue)
 {
-    OCR1B = blue;
-    OCR0B = red;
-    OCR0A = green;
+    OCR1B = 255 - blue;
+    OCR0B = 255 - red;
+    OCR0A = 255 - green;
 }
 
 void flash_led(void)
@@ -167,9 +167,9 @@ void flash_led(void)
 
     for(i = 0; i < 5; i++)
     {
-        set_led_color(255, 255, 255);
+        set_led_color(255, 128, 0);
         _delay_ms(100);
-        set_led_color(0, 0, 0);
+        set_led_color(255, 0, 255);
         _delay_ms(100);
     }
     set_led_color(0, 0, 0);
@@ -361,7 +361,7 @@ void process_command(char *cmd)
         set_led_color(255, 0, 0);
 }
 
-void __main(void)
+void rainbow_main(void)
 {
     setup();
     flash_led();
