@@ -5,10 +5,21 @@
 #include <avr/interrupt.h>
 #include <util/delay.h>
 
+/* Color codes
+
+Startup:
+
+5 red blinks - master starting
+5 blue blinks - slave starting
+
+solid red - data lost
+solid green - clock roll over
+
+*/
+
 // Bit manipulation macros
 #define sbi(a, b) ((a) |= 1 << (b))       //sets bit B in variable A
 #define cbi(a, b) ((a) &= ~(1 << (b)))    //clears bit B in variable A
-#define tbi(a, b) ((a) ^= 1 << (b))       //toggles bit B in variable A
 
 #define NOTHING  0  // nada!
 #define PARENT   2  // PB2
@@ -24,31 +35,30 @@
 #define EVENT_NO_EVENT     2
 
 // One clock tick = 8Mhz / 64 = 8us
-#define BIT_DURATION  50 //us
+#define BIT_DURATION  70 //us
 #define TIMEOUT       12 * BIT_DURATION
 
 void process_command(char *cmd);
 
-volatile uint16_t g_event_time = 0;
-volatile uint8_t g_event = EVENT_NO_EVENT;
 volatile uint8_t g_data_lost = 0;
-volatile uint16_t g_timer = 0;
+volatile uint8_t g_event = EVENT_NO_EVENT;
+volatile uint32_t g_timer = 0;
+volatile uint32_t g_event_time = 0;
 
 ISR(PCINT0_vect)
 {
     if (g_event != EVENT_NO_EVENT)
     {
         g_data_lost = 1;
-        g_event_time = g_timer + TCNT0;
         return;
     }
-    g_event_time = g_timer + TCNT0;
+    g_event_time = (g_timer << 8) + TCNT0;
     g_event = PINB & (1 << CHILD0) ? EVENT_RISING_EDGE : EVENT_FALLING_EDGE;
 }
 
 ISR(TIMER0_OVF_vect)
 {
-    g_timer += 256;
+    g_timer++;
 }
 
 void setup(void)
@@ -58,8 +68,8 @@ void setup(void)
     // PB0 = 0C0A = 1k = green
 
     /* Set to Fast PWM */
-//    TCCR0A |= _BV(WGM01) | _BV(WGM00) | _BV(COM0A1) | _BV(COM0B1);
-//    GTCCR |= _BV(PWM1B) | _BV(COM1B1);
+    TCCR0A |= _BV(WGM01) | _BV(WGM00) | _BV(COM0A1) | _BV(COM0B1) | _BV(COM0A0) | _BV(COM0B0);
+    GTCCR |= _BV(PWM1B) | _BV(COM1B1) | _BV(COM1B0);
 
     // Reset timers and comparators
     OCR0A = 0;
@@ -80,6 +90,19 @@ void setup(void)
 
     // Setup PWM pins as output
     DDRB = (1 << PB0) | (1 << PB1) | (1 << PB4);
+}
+
+void set_led_color(uint8_t red, uint8_t green, uint8_t blue)
+{
+    OCR1B = 255 - blue;
+    OCR0B = 255 - red;
+    OCR0A = 255 - green;
+}
+
+void panic(uint8_t r, uint8_t g, uint8_t b)
+{
+    set_led_color(r, g, b);
+    for(;;);
 }
 
 void listen_to(uint8_t pin)
@@ -123,7 +146,7 @@ void send_to(uint8_t pin)
     }
 }
 
-uint8_t get_event(uint16_t *event_time)
+uint8_t get_event(uint32_t *event_time)
 {
     uint8_t event;
 
@@ -136,14 +159,15 @@ uint8_t get_event(uint16_t *event_time)
     return event;
 }
 
-uint16_t elapsed_time(uint16_t start, uint16_t end)
+uint32_t elapsed_time(uint32_t start, uint32_t end)
 {
     // if our counter has not rolled over, its simple math
     if (start < end)
         return end - start;
 
     // it rolled, so we need to take that into account
-    return 65535 - start + end; 
+    panic(0, 255, 0);
+    return 0; // return something else after we decide to not panic anymore
 }
 
 void delay_ms(uint16_t d)
@@ -154,25 +178,17 @@ void delay_ms(uint16_t d)
         _delay_ms(1);
 }
 
-void set_led_color(uint8_t red, uint8_t green, uint8_t blue)
-{
-    OCR1B = blue;
-    OCR0B = red;
-    OCR0A = green;
-}
-
-void flash_led(void)
+void flash_led(uint8_t red, uint8_t blue, uint8_t green)
 {
     uint8_t i;
 
     for(i = 0; i < 5; i++)
     {
-        set_led_color(255, 255, 255);
+        set_led_color(red, green, blue);
         _delay_ms(100);
         set_led_color(0, 0, 0);
         _delay_ms(100);
     }
-    set_led_color(0, 0, 0);
 }
 
 int fade_test(void)
@@ -274,7 +290,7 @@ uint8_t process_io(char *cmd)
     static uint8_t bit_duration = 0;
     static uint8_t bit_count = 0, data = 0, have_start = 0;
     uint8_t event;
-    uint16_t duration, event_time;
+    uint32_t duration, event_time;
 
     event = get_event(&event_time);
 
@@ -282,15 +298,9 @@ uint8_t process_io(char *cmd)
     if (event == EVENT_NO_EVENT)
         return 0;
 
-    // If we've lost data, flash the red led and quit!
+    // If we've lost data, solid red and stop!
     if (g_data_lost)
-        for(;;)
-        {
-            tbi(PORTB, RED);
-            tbi(PORTB, GREEN);
-            tbi(PORTB, BLUE);
-            _delay_ms(100);
-        }
+        panic(255, 0, 0);
 
     // If we have a rising edge, note its time and bail
     if (event == EVENT_RISING_EDGE)
@@ -307,11 +317,7 @@ uint8_t process_io(char *cmd)
     // From here on out, its all processing falling edge events
 
     duration = elapsed_time(start_t, event_time);
-//    if (duration < 25)
-//        tbi(PORTB, BLUE);
-
-    // FIXME
-    if (0 && duration > TIMEOUT)
+    if (duration > TIMEOUT)
     {
         bit_count = 0;
         bit_duration = 0;
@@ -364,7 +370,7 @@ void process_command(char *cmd)
 void __main(void)
 {
     setup();
-    flash_led();
+    flash_led(255, 0, 0);
 
     while (1)
     {
@@ -376,15 +382,17 @@ void __main(void)
         fade(255,   0, 255, 255, 0,   0,  100, 20);
     }
 }
-
-#define BB_MASTER 1
+#define BB_MASTER 0
 #if BB_MASTER
 int main(void)
 {
     char cmd[MAX_CMD_LEN];
 
     setup();
-    flash_led();
+    flash_led(255, 0, 0);
+    sei();
+
+    delay_ms(1);
 
     for(;;)
     {
@@ -395,9 +403,9 @@ int main(void)
             if (process_io(cmd))
             {
                 if (strcmp(cmd, "sex") == 0)
-                   tbi(PORTB, BLUE);
+                    set_led_color(0, 255, 0); 
                 else
-                   tbi(PORTB, RED);
+                    set_led_color(255, 0, 0); 
             }
         }
         listen_to(NOTHING);
@@ -409,9 +417,10 @@ int main(void)
 int main(void)
 {
     char cmd[MAX_CMD_LEN];
+    uint8_t i = 0;
 
     setup();
-    flash_led();
+    flash_led(0, 255, 0);
     g_cmd[0] = 0;
     sei();
 
@@ -423,7 +432,10 @@ int main(void)
             listen_to(NOTHING);
             send_command(CHILD0, cmd);
             listen_to(CHILD0);
-            tbi(PORTB, BLUE);
+            if (i++ % 2 == 0)
+                set_led_color(0, 255, 0); 
+            else
+                set_led_color(255, 0, 0); 
         }
     }
 
