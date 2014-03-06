@@ -178,6 +178,13 @@ void delay_ms(uint16_t d)
         _delay_ms(1);
 }
 
+void set_led_color(uint8_t red, uint8_t green, uint8_t blue)
+{
+    OCR1B = 255 - blue;
+    OCR0B = 255 - red;
+    OCR0A = 255 - green;
+}
+
 void flash_led(uint8_t red, uint8_t blue, uint8_t green)
 {
     uint8_t i;
@@ -186,7 +193,7 @@ void flash_led(uint8_t red, uint8_t blue, uint8_t green)
     {
         set_led_color(red, green, blue);
         _delay_ms(100);
-        set_led_color(0, 0, 0);
+        set_led_color(255, 0, 255);
         _delay_ms(100);
     }
 }
@@ -367,7 +374,7 @@ void process_command(char *cmd)
         set_led_color(255, 0, 0);
 }
 
-void __main(void)
+void rainbow_main(void)
 {
     setup();
     flash_led(255, 0, 0);
