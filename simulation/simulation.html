@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Huetree Simulation</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  </head>
+  <body>
+    <canvas id="canvas" width="700" height="700">
+    Yer browser sucks, buddy.
+    </canvas>
+  </body>
+<script type="text/javascript">
+var example = document.getElementById('canvas');
+var context = example.getContext('2d');
+context.fillStyle = 'black';
+context.fillRect(0,0, 700,700);
+context.fillStyle = 'red';
+context.arc(350, 350, 10, 0, 2 * Math.PI, false);
+context.fill();
+
+var spacing = 50;
+tree = build(0, 4, 350, 350);
+
+function build(level, max_levels, x, y)
+{
+    if (level == max_levels)
+        return null;
+    node = new Object();
+    node.red = 255;
+    node.green = 255;
+    node.blue = 255;
+    node.x = x;
+    node.y = y;
+
+    context.beginPath();
+    context.fillStyle = 'red';
+    context.arc(x, y, 10, 0, 2 * Math.PI, false);
+    context.fill();
+
+    if (level % 2 == 0)
+    {
+        node.child0 = build(level + 1, max_levels, x - spacing, y);
+        node.child1 = build(level + 1, max_levels, x + spacing, y);
+    }
+    else
+    {
+        node.child0 = build(level + 1, max_levels, x, y - spacing);
+        node.child1 = build(level + 1, max_levels, x, y + spacing);
+    } 
+
+    return node;
+}
+
+
+</script>
+</html>
